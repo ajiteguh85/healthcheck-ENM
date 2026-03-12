@@ -223,9 +223,10 @@ run_healthcheck() {
     echo "=========================================================="
 
     # Use expect to automate password-based SSH
+    # Timeout set to 7200s (2 hours) — ENM healthcheck can take 30-90 min
     # The output goes to the logfile AND is shown on screen via tee
     /usr/bin/expect <<EXPECT_EOF 2>&1 | tee "${logfile}"
-set timeout 600
+set timeout 7200
 log_user 1
 spawn ssh ${SSH_OPTS} ${user}@${ip} "${HC_CMD}"
 expect {
@@ -238,7 +239,7 @@ expect {
         exp_continue
     }
     timeout {
-        puts "\n>>> TIMEOUT: Health check on ${name} (${ip}) did not complete within 10 minutes. <<<"
+        puts "\n>>> TIMEOUT: Health check on ${name} (${ip}) did not complete within 2 hours. <<<"
         exit 1
     }
     eof
@@ -325,9 +326,10 @@ generate_summary() {
             fi
 
             # Grep for error / failure lines (case-insensitive)
+            # Exclude: spawn/ssh lines, password prompts, zero-count lines, Warning: Permanently added
             local issues=""
             issues=$(grep -i -E "error|fail|critical|unable|exception|timeout|refused|unreachable|not found|denied|fatal" "${logfile}" \
-                     | grep -v -i -E "0 error|0 fail|no error|no fail|errors: 0|failures: 0|error_count.*0|fail_count.*0|password:" \
+                     | grep -v -i -E "^spawn |ConnectTimeout|StrictHostKeyChecking|UserKnownHostsFile|0 error|0 fail|no error|no fail|errors: 0|failures: 0|error_count.*0|fail_count.*0|password:|Warning: Permanently added" \
                      || true)
 
             if [ -z "${issues}" ]; then

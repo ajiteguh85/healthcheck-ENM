@@ -2,6 +2,8 @@
 ###############################################################################
 #  ENM Health Check Script - All 8 Servers
 #  ----------------------------------------
+#  Version : 3.0  (2026-03-18)
+#
 #  Purpose : SSH into each ENM server, run the Ericsson health-check command,
 #            collect individual logs, and produce a single summary report
 #            highlighting every error / failure found.
@@ -24,6 +26,8 @@
 #            password-based SSH.  No additional packages are installed.
 ###############################################################################
 
+SCRIPT_VERSION="3.0"
+
 # ========================== CONFIGURATION ====================================
 
 # Base directories
@@ -34,12 +38,20 @@ SUMMARY_DIR="${OUTPUT_DIR}/summary"
 # Health-check command executed on each remote server
 HC_CMD="/opt/ericsson/enminst/bin/enm_healthcheck.sh --action enminst_healthcheck"
 
-# SSH options (no host-key prompts, short timeouts to avoid hanging)
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
+# SSH options
+#   - StrictHostKeyChecking=no    : skip host-key prompts
+#   - UserKnownHostsFile=/dev/null: don't pollute known_hosts
+#   - ConnectTimeout=30           : fail fast if server unreachable
+#   - ServerAliveInterval=60      : send keepalive every 60s to prevent drops
+#   - ServerAliveCountMax=120     : allow up to 120 missed keepalives (2 hours)
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=120"
+
+# Unique marker to detect when the remote command finishes
+SENTINEL="__ENM_HC_DONE_SENTINEL__"
 
 # Timestamp used for every log file in this run (ensures they all match)
 TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
-HUMAN_DATE="$(date '+%d %B %Y')"   # e.g. "11 March 2026"
+HUMAN_DATE="$(date '+%d %B %Y')"   # e.g. "18 March 2026"
 
 # ---- Server list ----
 # Format: NAME|USER|PASSWORD|IP
@@ -72,6 +84,7 @@ print_header() {
     echo "###################################################################"
     echo "#                                                                 #"
     echo "#         ENM HEALTH CHECK TOOL - Ericsson Network Manager        #"
+    echo "#         Script Version: ${SCRIPT_VERSION}                                    #"
     echo "#                                                                 #"
     echo "###################################################################"
     echo "#  Date : ${HUMAN_DATE}                                            "
@@ -105,6 +118,7 @@ show_usage() {
     echo "  --all         Run health check on ALL servers (for cronjob)"
     echo "  --list        List available servers and exit"
     echo "  --help, -h    Show this help message"
+    echo "  --version     Show script version"
     echo ""
     echo "Examples:"
     echo "  $(basename "$0")                     # Interactive menu"
@@ -212,6 +226,15 @@ interactive_menu() {
 # ---------------------------------------------------------------------------
 #  run_healthcheck  –  SSH into a server via expect and capture the output
 #  Args: $1=name  $2=user  $3=password  $4=ip
+#
+#  Approach:
+#    1. expect spawns an interactive SSH session (not "ssh user@ip command")
+#    2. After login (password handled), we send the healthcheck command
+#       followed by a unique SENTINEL echo
+#    3. expect waits for the SENTINEL (up to 2 hours) to know the command
+#       finished, instead of relying on eof or a generic timeout
+#    4. SSH keepalive (ServerAliveInterval=60) prevents idle disconnects
+#    5. expect's log_file captures everything to the log; tee shows on screen
 # ---------------------------------------------------------------------------
 run_healthcheck() {
     local name="$1" user="$2" pass="$3" ip="$4"
@@ -220,48 +243,121 @@ run_healthcheck() {
     echo ""
     echo "=========================================================="
     echo " [$(date '+%H:%M:%S')]  Starting health check on ${name} (${ip})"
+    echo "  Script version: ${SCRIPT_VERSION}"
     echo "=========================================================="
 
-    # Use expect to automate password-based SSH
-    # Timeout set to 7200s (2 hours) — ENM healthcheck can take 30-90 min
-    # The output goes to the logfile AND is shown on screen via tee
-    /usr/bin/expect <<EXPECT_EOF 2>&1 | tee "${logfile}"
-set timeout 7200
+    # Create the expect script in a temp file to avoid heredoc quoting issues
+    local expect_script="${OUTPUT_DIR}/.expect_${name}_$$.exp"
+    cat > "${expect_script}" <<'EXPECT_TEMPLATE'
+# --- Parameters passed via environment ---
+set srv_name    $env(HC_SERVER_NAME)
+set srv_user    $env(HC_SERVER_USER)
+set srv_pass    $env(HC_SERVER_PASS)
+set srv_ip      $env(HC_SERVER_IP)
+set ssh_opts    $env(HC_SSH_OPTS)
+set hc_cmd      $env(HC_CMD)
+set sentinel    $env(HC_SENTINEL)
+set logfile     $env(HC_LOGFILE)
+
+# --- Logging ---
+log_file -noappend $logfile
 log_user 1
-spawn ssh ${SSH_OPTS} ${user}@${ip} "${HC_CMD}"
+
+# --- Phase 1: Connect and authenticate (30s timeout) ---
+set timeout 60
+spawn ssh -tt {*}$ssh_opts $srv_user@$srv_ip
+
 expect {
-    -re ".*assword:" {
-        send "${pass}\r"
+    -re "assword:" {
+        send "$srv_pass\r"
         exp_continue
     }
-    -re ".*yes/no.*" {
+    -re "yes/no" {
         send "yes\r"
         exp_continue
     }
+    -re "\\$|#" {
+        # Got shell prompt — login successful
+    }
     timeout {
-        puts "\n>>> TIMEOUT: Health check on ${name} (${ip}) did not complete within 2 hours. <<<"
+        puts "\n>>> ERROR: Could not login to $srv_name ($srv_ip) within 60 seconds. <<<"
         exit 1
     }
-    eof
+    eof {
+        puts "\n>>> ERROR: Connection to $srv_name ($srv_ip) closed before login. <<<"
+        exit 1
+    }
 }
-catch wait result
-set rc [lindex \$result 3]
-if { \$rc != 0 } {
-    puts "\n>>> WARNING: Remote command exited with code \$rc <<<"
-}
-exit \$rc
-EXPECT_EOF
 
+# --- Phase 2: Run healthcheck (2-hour timeout) ---
+# Send the healthcheck command followed by a sentinel marker
+set timeout 7200
+send "$hc_cmd ; echo $sentinel\r"
+
+expect {
+    "$sentinel" {
+        # Health check command completed
+    }
+    timeout {
+        puts "\n>>> TIMEOUT: Health check on $srv_name ($srv_ip) did not complete within 2 hours. <<<"
+        send "\x03"
+        sleep 2
+        send "exit\r"
+        expect eof
+        exit 1
+    }
+    eof {
+        puts "\n>>> ERROR: Connection to $srv_name ($srv_ip) dropped during health check. <<<"
+        exit 1
+    }
+}
+
+# --- Phase 3: Clean exit ---
+send "exit\r"
+expect eof
+exit 0
+EXPECT_TEMPLATE
+
+    # Export variables for the expect script
+    export HC_SERVER_NAME="${name}"
+    export HC_SERVER_USER="${user}"
+    export HC_SERVER_PASS="${pass}"
+    export HC_SERVER_IP="${ip}"
+    export HC_SSH_OPTS="${SSH_OPTS}"
+    export HC_CMD="${HC_CMD}"
+    export HC_SENTINEL="${SENTINEL}"
+    export HC_LOGFILE="${logfile}"
+
+    # Run expect — output goes to logfile via log_file AND to screen
+    /usr/bin/expect "${expect_script}" 2>&1 | tee "${logfile}.screen"
     local rc=$?
+
+    # Remove temp expect script
+    rm -f "${expect_script}"
+
+    # Clean the log file: remove sentinel lines and expect noise
+    if [ -f "${logfile}" ]; then
+        sed -i "/${SENTINEL}/d" "${logfile}"
+        # Remove carriage returns that expect/ssh may insert
+        sed -i 's/\r//g' "${logfile}"
+    fi
 
     if [ ${rc} -ne 0 ]; then
         echo ">>> WARNING: Health check on ${name} exited with code ${rc}" | tee -a "${logfile}"
     fi
 
+    # Merge screen output into logfile if log_file didn't capture
+    # (fallback: if logfile is empty but screen output exists, use screen output)
+    if [ ! -s "${logfile}" ] && [ -s "${logfile}.screen" ]; then
+        cp "${logfile}.screen" "${logfile}"
+    fi
+    rm -f "${logfile}.screen"
+
     echo ""
     echo "──────────────────────────────────────────────────────────────"
     echo " [$(date '+%H:%M:%S')]  Finished ${name}"
     echo " Log saved : ${logfile}"
+    echo " Log size  : $(du -h "${logfile}" 2>/dev/null | cut -f1)"
     echo "──────────────────────────────────────────────────────────────"
     echo ""
 }
@@ -285,6 +381,7 @@ generate_summary() {
         echo "║                                                                        ║"
         echo "╠══════════════════════════════════════════════════════════════════════════╣"
         echo "║  Generated  : $(date '+%Y-%m-%d %H:%M:%S')                                          ║"
+        echo "║  Script Ver : ${SCRIPT_VERSION}                                                      ║"
         echo "║  Log Dir    : ${OUTPUT_DIR}"
         echo "║  Servers    : ${#SELECTED_SERVERS[@]} checked                                        ║"
         echo "╚══════════════════════════════════════════════════════════════════════════╝"
@@ -326,10 +423,11 @@ generate_summary() {
             fi
 
             # Grep for error / failure lines (case-insensitive)
-            # Exclude: spawn/ssh lines, password prompts, zero-count lines, Warning: Permanently added
+            # Exclude: spawn/ssh lines, password prompts, zero-count lines,
+            #          SSH warnings, sentinel, authorized-use banners
             local issues=""
-            issues=$(grep -i -E "error|fail|critical|unable|exception|timeout|refused|unreachable|not found|denied|fatal" "${logfile}" \
-                     | grep -v -i -E "^spawn |ConnectTimeout|StrictHostKeyChecking|UserKnownHostsFile|0 error|0 fail|no error|no fail|errors: 0|failures: 0|error_count.*0|fail_count.*0|password:|Warning: Permanently added" \
+            issues=$(grep -i -E "error|fail|critical|unable|exception|refused|unreachable|not found|denied|fatal" "${logfile}" \
+                     | grep -v -i -E "^spawn |ConnectTimeout|StrictHostKeyChecking|UserKnownHostsFile|ServerAliveInterval|0 error|0 fail|no error|no fail|errors: 0|failures: 0|error_count.*0|fail_count.*0|password:|Warning: Permanently added|authorized use|SENTINEL" \
                      || true)
 
             if [ -z "${issues}" ]; then
@@ -407,6 +505,10 @@ parse_arguments() {
         --list)
             print_header
             print_server_list
+            exit 0
+            ;;
+        --version)
+            echo "ENM Health Check Script v${SCRIPT_VERSION}"
             exit 0
             ;;
         --all)

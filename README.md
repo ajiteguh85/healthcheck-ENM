@@ -4,7 +4,7 @@ Automated health check tool for 8 ENM (Ericsson Network Manager) servers.
 SSHs into each server, runs the Ericsson health check, collects logs, and
 generates a summary report highlighting errors and failures.
 
-**Current version:** `v4.0` — `enm_healthcheck_all-v2.sh`
+**Current version:** `v5.0` — `enm_healthcheck.sh`
 
 ## Servers Monitored
 
@@ -23,44 +23,44 @@ generates a summary report highlighting errors and failures.
 
 ```
 /home/eric/scripts/ajiteguh/
-├── enm_healthcheck_all-v2.sh               # Main script (v4.0)
-├── enm_healthcheck_all.sh                  # Old script (deprecated)
+├── enm_healthcheck.sh                      # Main script (v5.0)
 └── output_healthcheck/
-    ├── ENMR1_20260320_050000.log           # Individual server logs
-    ├── ENMR2_20260320_050000.log
-    ├── ENMR3_20260320_050000.log
-    ├── ENMR4_20260320_050000.log
-    ├── ENMJ1_20260320_050000.log
-    ├── ENMJ2_20260320_050000.log
-    ├── ENMTX_20260320_050000.log
-    ├── ENMCORE_20260320_050000.log
+    ├── cron.log                            # Cron console output (auto-truncated)
+    ├── ENMR1_20260325_050000.log           # Individual server logs
+    ├── ENMR2_20260325_050000.log
+    ├── ENMR3_20260325_050000.log
+    ├── ENMR4_20260325_050000.log
+    ├── ENMJ1_20260325_050000.log
+    ├── ENMJ2_20260325_050000.log
+    ├── ENMTX_20260325_050000.log
+    ├── ENMCORE_20260325_050000.log
     └── summary/
-        └── Summary_20260320_050000.log     # Combined summary report
+        └── Summary_20260325_050000.log     # Combined summary report
 ```
 
 ## Usage
 
 ```bash
 # Interactive menu — pick servers by number or name
-./enm_healthcheck_all-v2.sh
+./enm_healthcheck.sh
 
 # Run on ALL servers (used by cronjob)
-./enm_healthcheck_all-v2.sh --all
+./enm_healthcheck.sh --all
 
 # Run on a single server
-./enm_healthcheck_all-v2.sh ENMR1
+./enm_healthcheck.sh ENMR1
 
 # Run on multiple specific servers
-./enm_healthcheck_all-v2.sh ENMR1 ENMR4 ENMCORE
+./enm_healthcheck.sh ENMR1 ENMR4 ENMCORE
 
 # List available servers
-./enm_healthcheck_all-v2.sh --list
+./enm_healthcheck.sh --list
 
 # Show script version
-./enm_healthcheck_all-v2.sh --version
+./enm_healthcheck.sh --version
 
 # Show help
-./enm_healthcheck_all-v2.sh --help
+./enm_healthcheck.sh --help
 ```
 
 ## Initial Setup (First Time Only)
@@ -75,11 +75,11 @@ ssh root@10.21.233.4
 mkdir -p /home/eric/scripts/ajiteguh/output_healthcheck/summary
 
 # Copy the script (from your local machine or paste it)
-vi /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh
+vi /home/eric/scripts/ajiteguh/enm_healthcheck.sh
 # (paste the script content, save and exit)
 
 # Make it executable
-chmod +x /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh
+chmod +x /home/eric/scripts/ajiteguh/enm_healthcheck.sh
 ```
 
 ### Step 2: Update passwords
@@ -87,7 +87,7 @@ chmod +x /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh
 Edit the script and replace `password123` with the real password for each server:
 
 ```bash
-vi /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh
+vi /home/eric/scripts/ajiteguh/enm_healthcheck.sh
 ```
 
 Find the `ALL_SERVERS` section and update each line:
@@ -109,11 +109,11 @@ ALL_SERVERS=(
 
 ```bash
 # Check you have the right version
-/home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh --version
-# Expected output: ENM Health Check Script v4.0
+/home/eric/scripts/ajiteguh/enm_healthcheck.sh --version
+# Expected output: ENM Health Check Script v5.0
 
 # Test with a single server first
-/home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh ENMR1
+/home/eric/scripts/ajiteguh/enm_healthcheck.sh ENMR1
 
 # Check the output was generated
 ls -la /home/eric/scripts/ajiteguh/output_healthcheck/
@@ -139,7 +139,7 @@ crontab -e
 Add the following line at the bottom of the crontab file:
 
 ```
-0 5 * * * /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
+0 5 * * * /home/eric/scripts/ajiteguh/enm_healthcheck.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
 ```
 
 **What this means:**
@@ -151,7 +151,7 @@ Add the following line at the bottom of the crontab file:
 | Day of month | `*` | Every day |
 | Month | `*` | Every month |
 | Day of week | `*` | Every day of the week |
-| Command | `enm_healthcheck_all-v2.sh --all` | Run all 8 servers in non-interactive mode |
+| Command | `enm_healthcheck.sh --all` | Run all 8 servers in non-interactive mode |
 | `>> cron.log 2>&1` | | Append console output to cron log for troubleshooting |
 
 Save and exit the editor (`:wq` in vi).
@@ -164,33 +164,44 @@ crontab -l
 
 You should see your new entry listed:
 ```
-0 5 * * * /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
+0 5 * * * /home/eric/scripts/ajiteguh/enm_healthcheck.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
 ```
 
-### Step 5: (Optional) Remove old cronjob if upgrading from v3.0
+### Step 5: (Optional) Remove old cronjob if upgrading
 
 If you previously had the old script in crontab, remove that line:
 
 ```bash
 crontab -e
-# Delete the line referencing enm_healthcheck_all.sh (the old script)
-# Keep only the line referencing enm_healthcheck_all-v2.sh
+# Delete any line referencing enm_healthcheck_all.sh or enm_healthcheck_all-v2.sh
+# Keep only the line referencing enm_healthcheck.sh
 ```
 
 ### Step 6: (Optional) Test the cronjob manually
 
 ```bash
 # Run exactly what cron will run
-/home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
+/home/eric/scripts/ajiteguh/enm_healthcheck.sh --all >> /home/eric/scripts/ajiteguh/output_healthcheck/cron.log 2>&1
 
 # Check results
 ls -lt /home/eric/scripts/ajiteguh/output_healthcheck/
 cat /home/eric/scripts/ajiteguh/output_healthcheck/summary/Summary_*.log
 ```
 
-## Automatic Cleanup
+## Automatic Cleanup (7-Day Retention)
 
-The script automatically deletes log files and summary files older than **7 days** at the end of each run. No additional cron entry is needed for cleanup.
+The script automatically cleans up at the end of **every run** (including cron). No additional cron entry is needed.
+
+**What gets cleaned:**
+
+| File type | Path | Action |
+|-----------|------|--------|
+| Server log files | `output_healthcheck/ENM*.log` | Deleted if older than 7 days |
+| Summary reports | `output_healthcheck/summary/Summary_*.log` | Deleted if older than 7 days |
+| Cron console log | `output_healthcheck/cron.log` | Truncated (emptied) if older than 7 days |
+| Temp expect scripts | `output_healthcheck/.expect_*.exp` | Deleted (leftover from crashed runs) |
+
+The retention period is configurable via the `RETENTION_DAYS` variable at the top of the script (default: `7`).
 
 ## Output
 
@@ -198,9 +209,9 @@ The script automatically deletes log files and summary files older than **7 days
 
 Each server gets its own log file under `output_healthcheck/`:
 ```
-ENMR1_20260320_050000.log
-ENMR2_20260320_050000.log
-ENMR3_20260320_050000.log
+ENMR1_20260325_050000.log
+ENMR2_20260325_050000.log
+ENMR3_20260325_050000.log
 ...
 ```
 
@@ -208,7 +219,7 @@ ENMR3_20260320_050000.log
 
 A combined summary is generated under `output_healthcheck/summary/`:
 ```
-Summary_20260320_050000.log
+Summary_20260325_050000.log
 ```
 
 The summary shows, for each server, either:
@@ -219,7 +230,7 @@ Example:
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  Server : ENMR1  (10.21.233.4)
-│  File   : ENMR1_20260320_050000.log
+│  File   : ENMR1_20260325_050000.log
 ├──────────────────────────────────────────────────────────────────────────┤
 │
 │  [OK] No errors and failures found.
@@ -228,7 +239,7 @@ Example:
 
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  Server : ENMR4  (10.26.18.11)
-│  File   : ENMR4_20260320_050000.log
+│  File   : ENMR4_20260325_050000.log
 ├──────────────────────────────────────────────────────────────────────────┤
 │
 │  [ISSUES] 2 error/failure line(s) detected:
@@ -243,6 +254,7 @@ Example:
 
 | Version | File | Date | Changes |
 |---------|------|------|---------|
+| v5.0 | `enm_healthcheck.sh` | 2026-03-25 | Final script name; enhanced cleanup now also truncates cron.log and removes leftover temp files; configurable RETENTION_DAYS; cleanup shows detailed deletion counts |
 | v4.0 | `enm_healthcheck_all-v2.sh` | 2026-03-20 | Fixed ENMJ1 banner `###` matching as shell prompt; added per-server bash `timeout` so one stuck server never blocks the rest; errors on any server are logged but script continues |
 | v3.0 | `enm_healthcheck_all.sh` | 2026-03-18 | Interactive SSH with sentinel marker; SSH keepalive; version stamp |
 | v2.0 | `enm_healthcheck_all.sh` | 2026-03-12 | Server selection menu; tee for screen+file output |
@@ -256,7 +268,8 @@ Example:
 | Timeout after 2 hours | The ENM health check is genuinely taking too long. Check server load or run manually on the server. |
 | Empty log files | SSH connection failed. Check network connectivity: `ping <server_ip>`. Check credentials. |
 | Cron not running | Verify with `crontab -l`. Check `/var/log/cron` for errors. Make sure the script path is absolute. |
-| Wrong script version | Verify: `./enm_healthcheck_all-v2.sh --version` — should show `v4.0`. |
-| Permission denied | Run `chmod +x /home/eric/scripts/ajiteguh/enm_healthcheck_all-v2.sh`. |
-| Script stuck on one server | v4.0 uses `timeout` command — server will be killed after 2 hours and script moves to the next. |
-| Server errors don't stop script | By design in v4.0 — errors are logged but script always continues to the next server. |
+| Wrong script version | Verify: `./enm_healthcheck.sh --version` — should show `v5.0`. |
+| Permission denied | Run `chmod +x /home/eric/scripts/ajiteguh/enm_healthcheck.sh`. |
+| Script stuck on one server | Uses `timeout` command — server will be killed after 2 hours and script moves to the next. |
+| Server errors don't stop script | By design — errors are logged but script always continues to the next server. |
+| cron.log growing too large | The script auto-truncates cron.log when it's older than 7 days. |
